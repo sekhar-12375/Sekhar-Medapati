@@ -1,0 +1,6 @@
+{
+  "name": "Academia SQLite SIS",
+  "description": "Student information system and academic performance tracking platform powered by client-side SQLite with visual database browser, interactive SQL studio, and grade analytics.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
