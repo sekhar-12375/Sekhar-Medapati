@@ -2,7 +2,8 @@ import initSqlJs, { Database, SqlJsStatic } from 'sql.js';
 import { INITIAL_SCHEMA_SQL, INITIAL_SEED_DATA_SQL } from './seedData.ts';
 import { QueryResult, TableColumn, TableSchema } from '../types/database.ts';
 
-const DB_STORAGE_KEY = 'academia_sqlite_sis_db_v1';
+const DB_STORAGE_KEY = 'academia_sqlite_sis_db_v2';
+const DB_STORAGE_LEGACY_KEYS = ['academia_sqlite_sis_db_v1'];
 
 class SQLiteService {
   private db: Database | null = null;
@@ -57,9 +58,10 @@ class SQLiteService {
         try {
           this.db = new this.SQL.Database(savedDbData);
           this.isWasmLoaded = true;
-          // Verify database integrity
+          // Verify database integrity and run automatic schema migration (e.g. users table)
           const tables = this.getTableNames();
           if (tables.includes('students') && tables.includes('enrollments')) {
+            this.ensureSchemaMigrations();
             return;
           }
         } catch (e) {
@@ -77,6 +79,66 @@ class SQLiteService {
     } catch (error) {
       console.warn('WASM SQLite initialization failed, falling back to local SQLite engine emulator', error);
       this.initializeFallback();
+    }
+  }
+
+  /**
+   * Proactively verifies that required tables (like users) exist and auto-migrates if missing
+   */
+  public ensureSchemaMigrations(): void {
+    if (!this.db) return;
+    try {
+      const tables = this.getTableNames();
+      if (!tables.includes('users')) {
+        this.db.run(`
+          CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT UNIQUE NOT NULL,
+            password TEXT NOT NULL,
+            role TEXT NOT NULL CHECK(role IN ('admin', 'student')),
+            student_id INTEGER REFERENCES students(id) ON DELETE CASCADE,
+            full_name TEXT NOT NULL,
+            email TEXT UNIQUE NOT NULL,
+            last_login TEXT
+          );
+          CREATE INDEX IF NOT EXISTS idx_users_username ON users(username);
+          CREATE INDEX IF NOT EXISTS idx_users_student ON users(student_id);
+
+          INSERT INTO users (id, username, password, role, student_id, full_name, email) VALUES
+          (1, 'admin', 'admin123', 'admin', NULL, 'Dr. Aris Thorne (Registrar Administrator)', 'admin@academia.edu'),
+          (2, 'alexander', 'student123', 'student', 1, 'Alexander Wright', 'a.wright@university.edu'),
+          (3, 'STU-2023-0101', 'student123', 'student', 1, 'Alexander Wright', 'a.wright@university.edu'),
+          (4, 'claire', 'student123', 'student', 2, 'Claire Delacroix', 'c.delacroix@university.edu'),
+          (5, 'STU-2023-0102', 'student123', 'student', 2, 'Claire Delacroix', 'c.delacroix@university.edu'),
+          (6, 'zoe', 'student123', 'student', 7, 'Zoe Kaufman', 'z.kaufman@university.edu'),
+          (7, 'STU-2023-0210', 'student123', 'student', 7, 'Zoe Kaufman', 'z.kaufman@university.edu'),
+          (8, 'amara', 'student123', 'student', 11, 'Amara Okafor', 'a.okafor@university.edu'),
+          (9, 'STU-2024-0001', 'student123', 'student', 11, 'Amara Okafor', 'a.okafor@university.edu'),
+          (10, 'student', 'student123', 'student', 1, 'Alexander Wright (Demo Student)', 'demo.student@university.edu');
+        `);
+        this.persistToStorage();
+      } else {
+        // Table exists, verify it has seed admin
+        const userCount = this.query<{ count: number }>('SELECT COUNT(*) as count FROM users');
+        if ((userCount[0]?.count ?? 0) === 0) {
+          this.db.run(`
+            INSERT INTO users (id, username, password, role, student_id, full_name, email) VALUES
+            (1, 'admin', 'admin123', 'admin', NULL, 'Dr. Aris Thorne (Registrar Administrator)', 'admin@academia.edu'),
+            (2, 'alexander', 'student123', 'student', 1, 'Alexander Wright', 'a.wright@university.edu'),
+            (3, 'STU-2023-0101', 'student123', 'student', 1, 'Alexander Wright', 'a.wright@university.edu'),
+            (4, 'claire', 'student123', 'student', 2, 'Claire Delacroix', 'c.delacroix@university.edu'),
+            (5, 'STU-2023-0102', 'student123', 'student', 2, 'Claire Delacroix', 'c.delacroix@university.edu'),
+            (6, 'zoe', 'student123', 'student', 7, 'Zoe Kaufman', 'z.kaufman@university.edu'),
+            (7, 'STU-2023-0210', 'student123', 'student', 7, 'Zoe Kaufman', 'z.kaufman@university.edu'),
+            (8, 'amara', 'student123', 'student', 11, 'Amara Okafor', 'a.okafor@university.edu'),
+            (9, 'STU-2024-0001', 'student123', 'student', 11, 'Amara Okafor', 'a.okafor@university.edu'),
+            (10, 'student', 'student123', 'student', 1, 'Alexander Wright (Demo Student)', 'demo.student@university.edu');
+          `);
+          this.persistToStorage();
+        }
+      }
+    } catch (e) {
+      console.warn('Schema migration check error:', e);
     }
   }
 
@@ -103,6 +165,11 @@ class SQLiteService {
       if (options.includeSampleData) {
         this.db.run(INITIAL_SEED_DATA_SQL);
         this.recalculateAllStudentGpasInternal();
+      } else {
+        this.db.run(`
+          INSERT INTO users (id, username, password, role, student_id, full_name, email) VALUES
+          (1, 'admin', 'admin123', 'admin', NULL, 'System Administrator', 'admin@academia.edu');
+        `);
       }
 
       this.persistToStorage();
@@ -159,7 +226,13 @@ class SQLiteService {
 
   private loadFromStorage(): Uint8Array | null {
     try {
-      const base64 = localStorage.getItem(DB_STORAGE_KEY);
+      let base64 = localStorage.getItem(DB_STORAGE_KEY);
+      if (!base64) {
+        for (const legacyKey of DB_STORAGE_LEGACY_KEYS) {
+          base64 = localStorage.getItem(legacyKey);
+          if (base64) break;
+        }
+      }
       if (!base64) return null;
       const binaryString = atob(base64);
       const len = binaryString.length;

@@ -69,6 +69,7 @@ export default function App() {
     let unsubscribeAuth: (() => void) | null = null;
 
     sqliteService.ready().then(() => {
+      sqliteService.ensureSchemaMigrations();
       refreshData();
       setIsReady(true);
 

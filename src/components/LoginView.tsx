@@ -1,22 +1,23 @@
 import React, { useState } from 'react';
 import { authService } from '../services/authService.ts';
 import { AuthSession } from '../types/database.ts';
-import { ShieldCheck, GraduationCap, Lock, User, ArrowRight, AlertCircle, KeyRound, Sparkles } from 'lucide-react';
+import { ShieldCheck, GraduationCap, Lock, User, ArrowRight, AlertCircle, KeyRound, Eye, EyeOff, Check } from 'lucide-react';
 
 interface LoginViewProps {
   onLoginSuccess: (session: AuthSession) => void;
 }
 
 export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess }) => {
-  const [roleTab, setRoleTab] = useState<'student' | 'admin'>('student');
-  const [identifier, setIdentifier] = useState('STU-2023-0101');
-  const [password, setPassword] = useState('student123');
+  const [roleTab, setRoleTab] = useState<'admin' | 'student'>('admin');
+  const [identifier, setIdentifier] = useState('admin');
+  const [password, setPassword] = useState('admin123');
+  const [showPassword, setShowPassword] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
 
   const demoAccounts = authService.getDemoAccounts();
 
-  const handleRoleTabChange = (role: 'student' | 'admin') => {
+  const handleRoleTabChange = (role: 'admin' | 'student') => {
     setRoleTab(role);
     setErrorMessage(null);
     if (role === 'admin') {
@@ -28,38 +29,55 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess }) => {
     }
   };
 
-  const handleQuickLogin = (demo: { role: string; identifier: string; password: string }) => {
+  const handleQuickLogin = async (demo: { role: string; identifier: string; password: string }) => {
     setRoleTab(demo.role as any);
     setIdentifier(demo.identifier);
     setPassword(demo.password);
     setErrorMessage(null);
     setIsLoading(true);
 
-    setTimeout(() => {
-      const res = authService.login(demo.identifier, demo.password);
-      setIsLoading(false);
+    try {
+      const res = await authService.login(demo.identifier, demo.password);
       if (res.success && res.session) {
         onLoginSuccess(res.session);
       } else {
         setErrorMessage(res.error || 'Authentication failed.');
       }
-    }, 150);
+    } catch (err: any) {
+      setErrorMessage(err?.message || 'Login error occurred.');
+    } finally {
+      setIsLoading(false);
+    }
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMessage(null);
     setIsLoading(true);
 
-    setTimeout(() => {
-      const res = authService.login(identifier, password);
-      setIsLoading(false);
+    try {
+      const res = await authService.login(identifier, password);
       if (res.success && res.session) {
         onLoginSuccess(res.session);
       } else {
         setErrorMessage(res.error || 'Invalid username or password.');
       }
-    }, 200);
+    } catch (err: any) {
+      setErrorMessage(err?.message || 'Login error occurred.');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const fillDefaultCredentials = () => {
+    if (roleTab === 'admin') {
+      setIdentifier('admin');
+      setPassword('admin123');
+    } else {
+      setIdentifier('STU-2023-0101');
+      setPassword('student123');
+    }
+    setErrorMessage(null);
   };
 
   return (
@@ -82,7 +100,19 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess }) => {
       <div className="mt-6 sm:mx-auto sm:w-full sm:max-w-md">
         <div className="bg-slate-900 border border-slate-800 rounded-lg p-6 sm:p-8 shadow-2xl">
           {/* Role Segmented Tabs */}
-          <div className="flex rounded-md bg-slate-950 p-1 border border-slate-800 mb-6">
+          <div className="flex rounded-md bg-slate-950 p-1 border border-slate-800 mb-5">
+            <button
+              type="button"
+              onClick={() => handleRoleTabChange('admin')}
+              className={`flex-1 py-2 text-xs font-semibold rounded transition-colors flex items-center justify-center gap-1.5 ${
+                roleTab === 'admin'
+                  ? 'bg-indigo-600 text-white shadow-sm'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              <ShieldCheck className="w-3.5 h-3.5" />
+              <span>Administrator</span>
+            </button>
             <button
               type="button"
               onClick={() => handleRoleTabChange('student')}
@@ -95,17 +125,24 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess }) => {
               <GraduationCap className="w-3.5 h-3.5" />
               <span>Student Portal</span>
             </button>
+          </div>
+
+          {/* Role Specific Description & Quick Helper */}
+          <div className="mb-4 p-3 rounded bg-slate-950/70 border border-slate-800/80 flex items-center justify-between text-xs">
+            <div>
+              <span className="font-semibold text-slate-300">
+                {roleTab === 'admin' ? 'Administrator Login' : 'Student Login'}
+              </span>
+              <div className="text-[11px] text-slate-400 mt-0.5 font-mono">
+                {roleTab === 'admin' ? 'admin / admin123' : 'STU-2023-0101 / student123'}
+              </div>
+            </div>
             <button
               type="button"
-              onClick={() => handleRoleTabChange('admin')}
-              className={`flex-1 py-2 text-xs font-semibold rounded transition-colors flex items-center justify-center gap-1.5 ${
-                roleTab === 'admin'
-                  ? 'bg-indigo-600 text-white shadow-sm'
-                  : 'text-slate-400 hover:text-white'
-              }`}
+              onClick={fillDefaultCredentials}
+              className="text-[11px] font-semibold text-indigo-400 hover:text-indigo-300 underline-offset-2 hover:underline"
             >
-              <ShieldCheck className="w-3.5 h-3.5" />
-              <span>Administrator</span>
+              Auto-Fill
             </button>
           </div>
 
@@ -119,7 +156,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess }) => {
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
               <label className="block text-xs font-medium text-slate-300 mb-1">
-                {roleTab === 'student' ? 'Student ID or Email' : 'Admin Username'}
+                {roleTab === 'admin' ? 'Administrator Username' : 'Student ID or Email'}
               </label>
               <div className="relative">
                 <User className="w-4 h-4 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
@@ -129,9 +166,9 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess }) => {
                   value={identifier}
                   onChange={(e) => setIdentifier(e.target.value)}
                   placeholder={
-                    roleTab === 'student'
-                      ? 'e.g. STU-2023-0101 or alexander'
-                      : 'e.g. admin'
+                    roleTab === 'admin'
+                      ? 'admin'
+                      : 'e.g. STU-2023-0101 or alexander'
                   }
                   className="w-full bg-slate-950 border border-slate-800 rounded-md pl-9 pr-3 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 transition-colors font-mono"
                 />
@@ -145,13 +182,21 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess }) => {
               <div className="relative">
                 <Lock className="w-4 h-4 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
                 <input
-                  type="password"
+                  type={showPassword ? 'text' : 'password'}
                   required
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   placeholder="••••••••"
-                  className="w-full bg-slate-950 border border-slate-800 rounded-md pl-9 pr-3 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 transition-colors font-mono"
+                  className="w-full bg-slate-950 border border-slate-800 rounded-md pl-9 pr-10 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 transition-colors font-mono"
                 />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(!showPassword)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-200"
+                  tabIndex={-1}
+                >
+                  {showPassword ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                </button>
               </div>
             </div>
 
@@ -165,7 +210,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess }) => {
                   <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
                 ) : (
                   <>
-                    <span>Sign In to {roleTab === 'student' ? 'Student Account' : 'Admin Console'}</span>
+                    <span>Sign In as {roleTab === 'admin' ? 'Administrator' : 'Student'}</span>
                     <ArrowRight className="w-3.5 h-3.5" />
                   </>
                 )}
@@ -173,11 +218,11 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess }) => {
             </div>
           </form>
 
-          {/* Quick 1-Click Demo Accounts */}
+          {/* Quick 1-Click Demo Profiles */}
           <div className="mt-6 pt-5 border-t border-slate-800/80">
             <div className="flex items-center gap-1.5 text-slate-400 text-xs font-semibold mb-3">
               <KeyRound className="w-3.5 h-3.5 text-indigo-400" />
-              <span>One-Click Demo Profiles</span>
+              <span>One-Click Instant Login Profiles</span>
             </div>
 
             <div className="space-y-2">
@@ -191,7 +236,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess }) => {
                   <div>
                     <div className="text-xs font-semibold text-slate-200 group-hover:text-indigo-300 transition-colors flex items-center gap-1.5">
                       <span>{demo.title}</span>
-                      <span className="text-[10px] font-mono text-slate-500 uppercase">
+                      <span className="text-[10px] font-mono text-indigo-400/80 uppercase">
                         [{demo.role}]
                       </span>
                     </div>

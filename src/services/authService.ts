@@ -46,10 +46,10 @@ class AuthService {
     return this.currentSession;
   }
 
-  public login(
+  public async login(
     identifier: string,
     password: string
-  ): { success: boolean; session?: AuthSession; error?: string } {
+  ): Promise<{ success: boolean; session?: AuthSession; error?: string }> {
     const trimmedId = identifier.trim();
     const trimmedPass = password.trim();
 
@@ -58,7 +58,66 @@ class AuthService {
     }
 
     try {
-      // 1. Try checking the users table
+      // 1. Ensure SQLite engine is fully initialized and migrations applied
+      await sqliteService.ready();
+      sqliteService.ensureSchemaMigrations();
+
+      const lowerId = trimmedId.toLowerCase();
+
+      // 2. Administrator fail-safe check
+      const isAdminAttempt =
+        lowerId === 'admin' ||
+        lowerId === 'administrator' ||
+        lowerId === 'admin@academia.edu';
+
+      if (isAdminAttempt) {
+        // Accept standard admin passwords (admin123 or admin)
+        const isValidAdminPass = trimmedPass === 'admin123' || trimmedPass === 'admin';
+        if (isValidAdminPass) {
+          let adminUsers = sqliteService.query<User>(
+            `SELECT * FROM users WHERE role = 'admin' LIMIT 1`
+          );
+
+          let adminUser = adminUsers[0];
+          if (!adminUser) {
+            sqliteService.run(
+              `INSERT INTO users (username, password, role, student_id, full_name, email)
+               VALUES ('admin', 'admin123', 'admin', NULL, 'Dr. Aris Thorne (Registrar Administrator)', 'admin@academia.edu')`
+            );
+            adminUsers = sqliteService.query<User>(
+              `SELECT * FROM users WHERE role = 'admin' LIMIT 1`
+            );
+            adminUser = adminUsers[0] || {
+              id: 1,
+              username: 'admin',
+              role: 'admin',
+              student_id: null,
+              full_name: 'Dr. Aris Thorne (Registrar Administrator)',
+              email: 'admin@academia.edu',
+            };
+          }
+
+          sqliteService.run(
+            `UPDATE users SET last_login = datetime('now') WHERE id = ?`,
+            [adminUser.id]
+          );
+
+          sqliteService.logAudit(
+            'USER_LOGIN',
+            'users',
+            String(adminUser.id),
+            'Administrator signed in successfully'
+          );
+
+          const session: AuthSession = { user: adminUser };
+          this.currentSession = session;
+          localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(session));
+          this.notify();
+          return { success: true, session };
+        }
+      }
+
+      // 3. Check the users table in SQLite for any matching user
       const users = sqliteService.query<User & { student_number?: string }>(
         `SELECT u.*, s.student_id as student_number
          FROM users u
@@ -85,7 +144,6 @@ class AuthService {
           }
         }
 
-        // Update last login
         sqliteService.run(
           `UPDATE users SET last_login = datetime('now') WHERE id = ?`,
           [user.id]
@@ -105,7 +163,7 @@ class AuthService {
         return { success: true, session };
       }
 
-      // 2. Direct student ID login fallback (e.g. any student in students table using their ID and password "student123")
+      // 4. Student fallback check: Any student by student_id or email with 'student123'
       const studentMatch = sqliteService.query<Student>(
         `SELECT s.*, d.name as department_name, d.code as department_code
          FROM students s
@@ -114,7 +172,7 @@ class AuthService {
         [trimmedId, trimmedId]
       );
 
-      if (studentMatch.length > 0 && trimmedPass === 'student123') {
+      if (studentMatch.length > 0 && (trimmedPass === 'student123' || trimmedPass === 'student')) {
         const student = studentMatch[0];
         const user: User = {
           id: 100 + student.id,
@@ -132,9 +190,37 @@ class AuthService {
         return { success: true, session };
       }
 
+      // 5. Generic student shortcut
+      if (lowerId === 'student' && (trimmedPass === 'student123' || trimmedPass === 'student')) {
+        const student = sqliteService.query<Student>(
+          `SELECT s.*, d.name as department_name, d.code as department_code
+           FROM students s
+           JOIN departments d ON s.department_id = d.id
+           ORDER BY s.id ASC LIMIT 1`
+        )[0];
+
+        if (student) {
+          const user: User = {
+            id: 100 + student.id,
+            username: student.student_id,
+            role: 'student',
+            student_id: student.id,
+            full_name: `${student.first_name} ${student.last_name} (Demo Student)`,
+            email: student.email,
+          };
+          const session: AuthSession = { user, studentData: student };
+          this.currentSession = session;
+          localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(session));
+          this.notify();
+          return { success: true, session };
+        }
+      }
+
       return {
         success: false,
-        error: 'Invalid credentials. Check your username/Student ID and password.',
+        error: isAdminAttempt
+          ? 'Invalid administrator password. Default password is: admin123'
+          : 'Invalid credentials. Check your username/Student ID and password.',
       };
     } catch (err: any) {
       console.error('Login error:', err);
